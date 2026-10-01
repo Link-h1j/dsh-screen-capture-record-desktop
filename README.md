@@ -2,7 +2,19 @@
 
 > 给 DSH 桌面版（Desktop）输入框工具条加两个按钮：在「听写 / 开始录音」**左边**插入「录屏」和「截图」。
 
-**Quick start (English).** A DSH Desktop plugin that adds two buttons to the left of the dictation button in the composer toolbar. **Record**: click to start, click again (or press `Esc`) to stop — the host process captures frames and encodes them into a single `.webm` video that is attached to your message. **Screenshot**: capture the full screen, drag a region in the picker, and attach the crop. Requires Windows with PowerShell 5.1+, Python 3 with Pillow, and an ffmpeg build that includes the `image2pipe` demuxer, the `mjpeg` decoder, the `libvpx_vp8` encoder and the `webm` muxer — see [前置条件](#前置条件). Install with `dsh plugin add dsh-screen-capture-record-desktop`, then fully restart DSH.
+## 为什么做这个
+
+人和模型沟通时，最贵的一步往往不是模型不够聪明，而是我们**描述不准**：按钮错位了、动效不对、点完某个开关界面变成了另一副样子……打字描述要花几分钟，还常常漏掉决定性细节，来回几轮才说清一件事。
+
+这个插件就是把这一步压缩成两个动作 —— **录一段、截一张，直接塞进输入框**：
+
+- 录屏产出**一个 `.webm` 视频**（不是一堆图片），抽不抽帧、抽多密由会话里的 agent 按需决定；
+- 截图带**选区**，框哪算哪；
+- 两者都走 DSH 现成的附件通道，在输入框里补一句话就能发出去。
+
+模型拿到的是**第一手画面**，而不是一段转述。少一轮误解，就少一次返工 —— 这是它唯一的设计目标。
+
+**Quick start (English).** A DSH Desktop plugin that adds two buttons to the left of the dictation button in the composer toolbar. **Record**: click to start, click again (or press `Esc`) to stop — the host process captures frames and encodes them into a single `.webm` video that is attached to your message. **Screenshot**: capture the full screen, drag a region in the picker, and attach the crop. It exists to make human-agent communication cheaper: instead of describing a UI problem in words, hand the model the actual picture. Requires Windows with PowerShell 5.1+, Python 3 with Pillow, and an ffmpeg build that includes the `image2pipe` demuxer, the `mjpeg` decoder, the `libvpx_vp8` encoder and the `webm` muxer — see [前置条件](#前置条件). Install with `dsh plugin add dsh-screen-capture-record-desktop`, then fully restart DSH.
 
 ## 两个按钮
 
@@ -159,6 +171,12 @@ localStorage['dsh-capture.maxSeconds']   = '180'
 ## 实现方式（一句话）
 
 桌面壳在浏览器侧禁用了屏幕共享，所以抓屏 / 录屏全部放在**宿主进程**做，浏览器半边只负责按钮、选区浮层、把产物塞进附件。宿主侧的录制管道是「Python 抓帧 → MJPEG → ffmpeg → 单个 `.webm`」，产物是完整视频而不是一堆抽好的图片（要不要抽帧、抽多密，由使用方按需决定）。
+
+## 欢迎官方收录
+
+这个插件刻意只站在**官方公开接口**上实现：组合包用 `package.json` 的 `dsh.bundle.patch` 声明，浏览器半边用 `dsh.client` 挂载，宿主侧只用 `ctx.inject(['webServer'])` 注册路由 —— **不改 DSH 源码、不碰私有 API、不引入第三方运行时**。按钮尺寸、圆角、图标规范、悬浮提示、轻提示、选区卡片也都逐项对齐了官方组件（实测数据见 [DEV.md](DEV.md)），目的就是让它看起来、用起来都像内置功能。
+
+如果官方认为「把说不清的界面问题直接发给模型」这件事该由桌面版本体来做，**欢迎直接收录、合并，或以任何方式复用这里的实现** —— 本仓库是 MIT，随你处置。需要配合改造、补测试或写设计说明，在本仓库开 Issue 即可，作者会跟到底。
 
 ## License
 
