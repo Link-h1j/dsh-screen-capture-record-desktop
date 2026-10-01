@@ -1,0 +1,21 @@
+# dsh-screen-capture-record-desktop 组合包 patch（bundle patch）
+#
+# 作用：声明本包是一个 **组合包（bundle）**，让 DSH 的插件管理器
+# （@deepseek-ai/dsh-plugin-manager / 侧边栏「插件」页）能够安装、启停、卸载它。
+#
+# 为什么需要这个文件：管理器只收「声明了 dsh.bundle.patch 的包」——
+# 没有它时 inspect() 回答 problem = not-a-bundle，UI 报
+#   「这个包没有声明组合包，无法作为插件安装：<name> declares no dsh.bundle」，
+# 并且安装会被回滚（package.json 与 pnpm-lock.yaml 恢复原样）。
+#
+# 这一层做的事只有一件：把本插件那一行插进 profile 名单。行按包名引用自己，
+# 宿主 node 半边（exports "."）是空壳，浏览器半边由 package.json 的
+# dsh.client 声明加载（见 @dickpy/dsh-imagegen 的同款写法）。
+#
+# ⚠ 装成组合包之后，启停请在「插件」页里做（它改的是 profile 的
+#   package.json → dsh.profile.bundles），**不要**再手工往
+#   profiles\desktop\cordis.patch.yml 写同 id 的 insert 行 —— 两层同时挂载
+#   同一个 id 会导致重复挂载。
+- insert:
+    - id: screen-capture-record-desktop
+      name: dsh-screen-capture-record-desktop

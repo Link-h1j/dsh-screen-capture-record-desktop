@@ -1,0 +1,70 @@
+{
+  "name": "dsh-screen-capture-record-desktop",
+  "version": "0.2.0",
+  "description": "DSH 桌面版输入框工具条插件：在「听写」左边加「录屏」与「截图」两个按钮 —— 截图带选区，录屏产出一个 .webm 视频并自动进附件。Screen capture & recording buttons for the DSH desktop composer.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client.body.js",
+    "lib/recorder.py",
+    "lib/shot.ps1",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "screen-capture",
+    "screenshot",
+    "screen-recording",
+    "录屏",
+    "截图"
+  ],
+  "license": "MIT",
+  "author": "Link-h1j",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Link-h1j/dsh-screen-capture-record-desktop.git"
+  },
+  "homepage": "https://github.com/Link-h1j/dsh-screen-capture-record-desktop#readme",
+  "bugs": {
+    "url": "https://github.com/Link-h1j/dsh-screen-capture-record-desktop/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "build": "node tools/build-client.mjs",
+    "check": "node tools/build-client.mjs --check",
+    "bundle:check": "node tools/check-bundle.mjs",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  }
+}
