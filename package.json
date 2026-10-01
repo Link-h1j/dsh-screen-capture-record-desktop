@@ -1,6 +1,6 @@
 {
   "name": "dsh-screen-capture-record-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DSH 桌面版输入框工具条插件：在「听写」左边加「录屏」与「截图」两个按钮 —— 截图带选区，录屏产出一个 .webm 视频并自动进附件。Screen capture & recording buttons for the DSH desktop composer.",
   "type": "module",
   "main": "lib/index.js",

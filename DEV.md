@@ -100,6 +100,40 @@ apply(ctx)
 
 `recorder.py` 的停止条件有四条：父进程关闭 stdin、往 stdin 写任意一行、到达 `--seconds`、输出文件旁出现 `<out>.stop`。生产路径只用第一条。
 
+### 录制中点「发送」= 收尾 + 一并发出
+
+用户要求（2026-10-01）：「把『再点一次录屏形成文件』和『发送消息』结合 —— 我点发送，
+录制的文件也一并发送」。也就是录屏中不用先停下来，直接点「发送」走完整条链路：
+
+```
+点击发送（此时 rec.state === 'recording'）
+  └─ onSendClickWhileRec（document 捕获阶段）
+        ├─ preventDefault + stopImmediatePropagation   ← React 的事件委托在冒泡阶段，拦得住
+        ├─ await stopRec()        → finishRec：POST /record/stop → 取回 blob → pushToComposer
+        ├─ lastAttach.ok ? 否则取消这次发送并把磁盘路径告诉用户（绝不静默丢文件）
+        ├─ await waitForAttachmentChip(文件名)  ← 等附件卡片真的渲染出来，不盲等固定毫秒
+        └─ btn.click()            ← sendReplaying=true 时拦截器放行，原样重放这次发送
+```
+
+**主操作按钮是「发送 ↔ 停止生成」共用的同一个槽位**（`button[class*="_primary"]`，实测
+生成中它的 aria-label 是「停止生成」）。所以 `findSendButton()` 的判据是「composer 卡片里
+的主操作按钮 **且** 文案不是停止/中断类」—— 只按文案找会落空（空闲时的文案不保证叫「发送」），
+只按位置找会把「停止生成」当成发送（那样用户想打断 Agent，结果被改成停录+发消息）。
+
+关闭开关（DevTools）：`localStorage['dsh-screen-capture.sendStopsRec'] = '0'`。
+只在 `rec.state === 'recording'` 时生效，其余时候对「发送」零影响。
+
+#### 这条链路的时间花在哪（2026-10-01 用户反馈「有点延迟」后查的）
+
+| 环节 | 成本 | 处理 |
+| --- | --- | --- |
+| `POST /record/stop`：recorder.py 停帧 + ffmpeg 写完 WebM 尾部 | 硬成本，几百 ms 起 | 宿主侧 `waitForFinish` 的轮询 **200ms → 25ms**（否则 ffmpeg 早就好了还要白等最多 200ms） |
+| `GET /record/file`：把整段视频取回浏览器 | 硬成本（附件通道只认 File，必须先取回来再交回去） | 不动 |
+| 等「附件卡片渲染出来」 | **原来每次都等满 3 秒**：搜索根只取 composer 卡片，而附件卡片渲染在它**之外** | 搜索根往上爬 5 层（带 `textContent.length > 3000` 闸门防止扫进对话区），超时 3s → **1.2s**，等不到就静默按已挂上处理（`pushToComposer` 已经成功了，原来那句提示是误报） |
+| 重放发送前的固定等待 | 150ms | 60ms |
+
+计时留在 `localStorage['dsh-screen-capture.lastSendTiming']`，成功提示里也会带「收尾 N.Ns」。
+
 ## 关键限制与坑
 
 ### 1. `style.cssText` 只认 kebab-case
