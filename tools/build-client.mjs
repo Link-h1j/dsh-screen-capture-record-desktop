@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -25,6 +26,26 @@ const bodyPath = path.join(root, 'lib', 'client.body.js')
 const outPath = path.join(root, 'lib', 'client.js')
 
 const body = fs.readFileSync(bodyPath, 'utf8').replace(/^\uFEFF/, '')
+
+/**
+ * 语法闸门：生成的 client.js 会被 client-hmr 直接塞进渲染进程执行，
+ * **写坏一次就能把整个界面带走**。
+ *
+ * 2026-10-02 真事：一次按 GBK 解码的 PowerShell 行手术把正文写成乱码，
+ * 加上另一次删错括号 —— 两个坏包先后被 HMR 加载，渲染进程当场崩，
+ * 桌面版弹出「应用无法启动或已意外停止」（崩在 SyntaxError 上，日志在
+ * %APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*-renderer.log）。
+ *
+ * 所以：先按渲染进程的真实包法编译一遍（只编译、不执行），不过就拒绝落盘 ——
+ * 磁盘上永远留着上一个能跑的版本。
+ */
+try {
+  new vm.Script('(function (module, exports, require) {\n' + body + '\n})', { filename: 'client.body.js' })
+} catch (e) {
+  console.error('lib/client.body.js 语法不过，拒绝生成 lib/client.js：' + ((e && e.message) || e))
+  console.error('（磁盘上的 lib/client.js 保持原样，HMR 不会拿到坏包）')
+  process.exit(1)
+}
 
 const banner = `/**
  * 由 tools/build-client.mjs 从 lib/client.body.js 生成 —— 不要直接改这个文件。

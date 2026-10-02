@@ -48,3 +48,7 @@ ffmpeg 探测顺序：`$DSH_CAPTURE_FFMPEG` → `C:\Program Files\CP3\ffmpeg.exe
   （2026-10-02 就这么把 `lib/client.body.js` 搞坏过一次）。请用编辑器 / `edit` 工具，
   或 `.NET` 显式编码 API：`[IO.File]::ReadAllText($p,[Text.Encoding]::UTF8)` +
   `[IO.File]::WriteAllText($p,$t,(New-Object Text.UTF8Encoding($false)))`。
+- **别怕构建失败**：`tools/build-client.mjs` 有**语法闸门** —— 正文编译不过就拒绝写
+  `lib/client.js`，磁盘上永远留着上一个能跑的版本。这道闸门是 2026-10-02 的事故换来的：
+  两个坏包（乱码 + 删错括号）被 client-hmr 直接加载进渲染进程，桌面版当场崩溃
+  （`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*-renderer.log` 里能看到 `Uncaught SyntaxError`）。
