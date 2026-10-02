@@ -23,6 +23,7 @@
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "keywords": [
