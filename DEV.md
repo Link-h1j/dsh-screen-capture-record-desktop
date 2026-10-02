@@ -5,9 +5,10 @@
 ## 仓库结构
 
 ```
-lib/index.js          宿主半边：5 条 HTTP 路由（抓屏 / 落盘 / 开录 / 停录 / 取录像）
+lib/index.js          宿主半边：6 条 HTTP 路由（抓屏 / 落盘 / 录制源 / 开录 / 停录 / 取录像）
 lib/shot.ps1          单帧抓屏（GDI，纯 ASCII）
-lib/recorder.py       录屏抓帧（Pillow ImageGrab → MJPEG 流）
+lib/sources.ps1       枚举可录制的源：虚拟桌面 / 显示器 / 顶层窗口（纯 ASCII）
+lib/recorder.py       录屏抓帧（Pillow ImageGrab → MJPEG 流；支持 --region / --hwnd）
 lib/client.body.js    浏览器半边 —— 可读源码，改这个
 lib/client.js         由 build-client.mjs 生成，不要直接改
 cordis.patch.yml      组合包 patch：把本包那一行插进 profile 名单
@@ -15,6 +16,10 @@ package.json          声明 dsh.bundle.patch 与 dsh.client
 tools/build-client.mjs  client.body.js → client.js（--check 校验一致）
 tools/selftest.mjs      假 DOM 里跑 client.body.js，抓「加载就炸」
 tools/smoke.mjs         冒烟：抓屏 / 落盘 / 真录一段并校验 WebM / 路由接线
+tools/check-capture-sources.mjs  宿主侧自测：源枚举 + --region/--hwnd/--max-edge 的帧尺寸
+tools/e2e-annotate.mjs  真机端到端：CDP 合成事件走「截图 → 拖框 → 松手出工具栏 → 落墨 → 用这张」
+tools/e2e-record-picker.mjs      真机端到端：录屏选源框（mock 模式验客户端，--live 真录并校验尺寸）
+tools/check-live-record.mjs      真宿主验收（不需要 CDP/页面）：真清单 + 区域/窗口录制 + 抽帧验尺寸
 tools/check-bundle.mjs  安装前自检：复刻插件管理器的 inspect 判据
 tools/check-patch.mjs   手工挂载路线：校验 profile 的 cordis.patch.yml
 ```
@@ -41,7 +46,8 @@ setDisplayMediaRequestHandler((_r, cb) => cb({}));        // 屏幕共享 → �
 | `GET` | `/plugins/<name>/shot?probe=1` | 探活，返回 `{ok,capable,script}`，不抓屏 |
 | `GET` | `/plugins/<name>/shot?format=jpg\|png&maxEdge=&quality=` | 宿主跑 `shot.ps1` 抓整屏，直接回图片字节 |
 | `POST` | `/plugins/<name>/save?dir=&file=` | 把请求体字节落盘到 `<DSH_HOME>\dsh-screen-capture\<dir>\<file>` |
-| `POST` | `/plugins/<name>/record/start?fps=&maxEdge=&quality=&seconds=` | 起 `recorder.py` → ffmpeg（VP8/WebM）管道 |
+| `GET` | `/plugins/<name>/sources` | 宿主跑 `sources.ps1` 枚举可录制的源（虚拟桌面 / 显示器 / 窗口），页面上的选择框用它 |
+| `POST` | `/plugins/<name>/record/start?fps=&maxEdge=&quality=&seconds=&x=&y=&w=&h=&hwnd=` | 起 `recorder.py` → ffmpeg（VP8/WebM）管道；给了 `x/y/w/h` 就只录那一块，给了 `hwnd` 每帧跟着那个窗口 |
 | `POST` | `/plugins/<name>/record/stop` | 关抓屏管 → 等 ffmpeg 收尾 → 报产物 |
 | `GET` | `/plugins/<name>/record/file` | 把录好的 `.webm` 交给浏览器（进附件） |
 
@@ -69,26 +75,46 @@ apply(ctx)
 ```
 点击截图
   └─ hostShot({maxEdge, quality})           GET /shot，拿整屏 → ImageBitmap
-        └─ pickRegion(bitmap)               自绘浮层：拖动框选 / 单击=整屏 / Enter / Esc
-              └─ cropToJpeg()               canvas 按原始分辨率裁切 → JPEG Blob
-                    ├─ saveFramesToHost()   POST /save，先落盘保证有文件
-                    └─ pushToComposer()     造 DataTransfer → 附件入口派发 change
+        └─ captureOverlay(bitmap, rect0)    一个自绘浮层，两个态：
+              ├─ 选区态：拖动框选 / 单击=整屏 / Esc 取消
+              │      └─ pointerup 且真的拖了 ──→ 立刻转标注态（关键：不用再确认一次）
+              ├─ 标注态：画笔 / 矩形 / 箭头 / 文字 + 撤销清空 + 颜色线宽
+              │      └─ 画布按选区裁剪（画到框外不进图）；「重选区域」回选区态
+              └─ 确认（Enter /「用这张」）
+                    └─ finish()：按原始分辨率裁切 → 把标注按 k=bitmap.w/dw 合成上去 → JPEG Blob
+                          ├─ saveFramesToHost()   POST /save，先落盘保证有文件
+                          └─ pushToComposer()     造 DataTransfer → 附件入口派发 change
 ```
+
+`captureOverlay` 是 2026-10-02 由老的 `pickRegion` + `annotateShot` 合并来的：用户实测反馈
+「截图功能能不能在刚刚拖动框选的时候就能使用画笔」，两层之间那次多余的确认被删掉，
+现在拖框松手就是绘制态。`annotate=false` 时不出工具栏、退化成「拖框 + 用这张」的老行为。
 
 ### 录屏数据流
 
 ```
-点击录屏
-  └─ POST /record/start
-        spawn recorder.py --fps … --max-edge … --quality … --seconds …
-              │ stdout: MJPEG 帧流
-              ▼
-        spawn ffmpeg -f image2pipe -c:v mjpeg -framerate N -i pipe:0
-                     -c:v libvpx -b:v 1M -deadline realtime -cpu-used 8
-                     -pix_fmt yuv420p -f webm pipe:1
-              │ stdout: webm 字节
-              ▼
-        宿主 Node createWriteStream  →  <DSH_HOME>\dsh-screen-capture\rec-<ts>.webm
+点击录屏（rec.state 不是 recording 时）
+  └─ startRecFlow()
+        ├─ cfg().askSource 开着 → pickRecordSource()
+        │     ├─ fetchSources()            GET /sources（宿主 sources.ps1：显示器 + 窗口）
+        │     ├─ hostShot({maxEdge:0})     整屏底图 → 每项裁一张缩略图（一次抓屏 N 次裁切）
+        │     └─ 用户点哪一项 → {kind,label,x,y,w,h,hwnd}
+        │         └─ kind='region-request' 时改走 captureOverlay(rectOnly) 拖框，拿回矩形
+        │     （取消 → 直接返回，什么都不做）
+        └─ startRec(source)
+              └─ POST /record/start?fps=&maxEdge=&quality=&seconds=[&x=&y=&w=&h=][&hwnd=]
+                    spawn recorder.py --fps … --max-edge … --quality … --seconds … [--region x,y,w,h] [--hwnd N]
+                          │ 每帧：ImageGrab.grab(all_screens=True)
+                          │       → 按 --hwnd 当前矩形（拿不到就 --region）裁一块
+                          │       → 按 maxEdge 缩放 → 画光标（坐标按本帧原点平移）
+                          │ stdout: MJPEG 帧流
+                          ▼
+                    spawn ffmpeg -f image2pipe -c:v mjpeg -framerate N -i pipe:0
+                                 -c:v libvpx -b:v 1M -deadline realtime -cpu-used 8
+                                 -pix_fmt yuv420p -f webm pipe:1
+                          │ stdout: webm 字节
+                          ▼
+                    宿主 Node createWriteStream  →  <DSH_HOME>\dsh-screen-capture\rec-<ts>.webm
 
 点击结束（再点按钮 / Esc / 到时长上限）
   └─ POST /record/stop
@@ -98,7 +124,24 @@ apply(ctx)
   └─ GET /record/file → Blob → File → pushToComposer()
 ```
 
-`recorder.py` 的停止条件有四条：父进程关闭 stdin、往 stdin 写任意一行、到达 `--seconds`、输出文件旁出现 `<out>.stop`。生产路径只用第一条。
+`recorder.py` 的停止条件有四条：父进程关闭 stdin、往 stdin 写任意一行、到达 `--seconds`、输出文件旁边出现 `<out>.stop`。生产路径只用第一条。
+
+### 录「哪一块」：坐标系必须三方对齐（新手最容易踩）
+
+`recorder.py`、`sources.ps1`、`shot.ps1` 三方说的必须是同一套坐标 —— **物理像素的虚拟桌面坐标系**：
+
+- 三个进程都先声明 DPI 感知（`SetProcessDpiAwareness(2)` / `SetProcessDPIAware`）。不声明的话
+  150% 缩放下的 3840×2160 会被报成 2560×1440，选出来的框和实际录到的位置会整体错位。
+- 原点是**虚拟桌面左上角**，多显示器时可能是负数（左边那台显示器 x<0）。
+  `sources.ps1` 用 `GetSystemMetrics(SM_XVIRTUALSCREEN/SM_YVIRTUALSCREEN)`；
+  `recorder.py` 用同一个 API，把 `--region` 换算成 `ImageGrab.grab(all_screens=True)` 那张
+  整桌底图里的裁切框 —— **先整张抓、再 crop**，不去猜 Pillow 的 `bbox=` 在 all_screens 下的语义。
+- 光标是虚拟桌面坐标，区域录制时必须减去本帧原点再画，否则箭头画到框外。
+
+录窗口的坐标是**动态**的：`--hwnd` 每帧重新取窗口矩形（先 DWM `DWMWA_EXTENDED_FRAME_BOUNDS`，
+拿不到再 `GetWindowRect`），窗口被拖动 / 改大小都跟着；窗口不可见、最小化、矩形小于 40px 或
+取不到时退回 `--region` 的固定矩形。录到的仍然是**屏幕像素**，别的窗口摞在上面就会录到那个窗口
+（宿主机只能抓屏，做不到 `getDisplayMedia` 的窗口流）—— 这条限制在 README 里对用户也写明了。
 
 ### 录制中点「发送」= 收尾 + 一并发出
 
@@ -207,6 +250,11 @@ node tools\build-client.mjs            # 重新生成 lib/client.js
 node tools\build-client.mjs --check    # 只校验 lib/client.js 与 client.body.js 一致
 node tools\selftest.mjs                # 假 DOM 离线自检（apply 不炸 + 按钮顺序）
 node tools\smoke.mjs                   # 冒烟：抓屏 / PNG / 落盘 / 真录一段并校验 WebM / 路由接线
+node tools\check-capture-sources.mjs --windows   # 宿主侧：源枚举 + --region/--hwnd 帧尺寸
+node tools\e2e-annotate.mjs            # 真机端到端（需要带 --remote-debugging-port=9222 的桌面版在跑）
+node tools\e2e-record-picker.mjs       # 录屏选源框（mock 模式，不需要重启宿主）
+node tools\e2e-record-picker.mjs --live   # 同上但用真清单真录（**需要宿主已完整重启**）
+node tools\check-live-record.mjs       # 真宿主验收：不需要 CDP，直接打路由（区域/窗口录制 + 抽帧验尺寸）
 node tools\check-bundle.mjs            # 安装前自检：复刻插件管理器 inspect 判据
 node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（手工挂载路线）
 ```
@@ -214,6 +262,38 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 - `build-client.mjs` 的产物是一层 `window.__ModuleLoader__.load({ id, factory })` 外壳：客户端 bundle 必须是这种懒 CJS 表，裸写 `exports.apply = …` 在浏览器里会直接 `ReferenceError`。所以正文放在 `client.body.js`，`client.js` 是生成物。改完正文记得重跑，或者用 `--check` 让 CI 卡住不一致。
 - `smoke.mjs` 在文件开头把 `DSH_CAPTURE_DIR` 指到工作区路径 —— 冒烟跑在受限沙箱里，工作区是唯一稳妥的写目标。它不需要 DSH 在跑，也不需要重启。
 - `check-bundle.mjs` 复刻插件管理器的判据（`dsh.bundle.patch` 存在且能解析、确实插入了本包那一行、`dsh.client.platform === 'web'`、关键文件齐全）。任一条不满足，GUI 会报「这个包没有声明组合包，无法作为插件安装」并回滚安装。
+
+`e2e-annotate.mjs` 的操作要点（都是实测踩出来的）：
+
+- **按钮要指名 `button[data-dsh-capture-shot]`**：属性同时挂在外层 host span 和里面的 button 上，
+  `document.querySelector('[data-dsh-capture-shot]')` 命中的是 span —— 对着它 `.click()` 什么都不会发生
+  （既不弹浮层也不报错），很容易误判成「插件坏了」。
+- 用 CDP 的 `Runtime.evaluate` + `Page.captureScreenshot`，靠**合成 PointerEvent**
+  （`pointerdown/move/up` + `clientX/clientY`）驱动，全程不碰用户的物理鼠标。
+- 浮层里的关键 DOM 钩子：`[data-dsh-capture-overlay]`（根）、`[data-dsh-capture-stage]`、`[data-dsh-capture-annotate]`（画布）、
+  `[data-dsh-capture-tools]`（工具栏，`display` 就是「是否已进标注态」的判据）、
+  `[data-dsh-capture-reselect|ok|cancel]`（动作按钮）、`[data-dsh-capture-hint]`（提示文案）。
+- 脚本结尾有兜底：万一浮层还挂着就补一发 `Esc`，别把用户的屏幕盖住。
+
+`e2e-record-picker.mjs` 两种模式各管一半：
+
+- **mock（默认）**：把页面里的 `fetch` 换成替身 —— `/sources` 回一份假清单（2 显示器 + 2 窗口），
+  `/record/start` 只把 URL 记进 `window.__spy` 并回 ok。这样**不用重启宿主**就能验客户端：
+  选择框有没有弹、清单条目对不对、点某个窗口有没有拼出 `x/y/w/h/hwnd`、取消会不会误开录、
+  「自定义区域」进的是不是无标注的选区浮层。`/shot` 仍走真宿主，所以缩略图是真图。
+  ⚠ 跑完必须把 `window.fetch` 还原并把页面刷一次，否则假的录制状态会留在页面里。
+- **`--live`**：用真清单真录，选一个显示器录 ~4 秒，再用 ffmpeg 抽首帧，
+  校验帧尺寸 == 该显示器按 `maxEdge` 缩放后的尺寸。**宿主半边（index.js）不在热更机制里**，
+  所以这个模式必须先完整重启 DSH，否则 `/sources` 是 404（脚本会直接说清楚并退出）。
+
+**没有 CDP 时怎么验「真页面 + 真清单」**（本机实测有效，2026-10-02）：桌面版不一定带
+`--remote-debugging-port`（用户自己的重启路径就不带），Chromium 里的 DOM 在 UIA 里也看不见
+（a11y 没开，`accessibility_tree` 只到 `View`）。这时在 `client.body.js` 里临时插一段**探针**：
+页面加载后自己 `click()` 录屏按钮 → 等选择框出现 → 把行数/文案/每行缩略图的落墨像素数
+`POST` 到本插件自己的 `/save?dir=dev&file=picker-probe.json` → 再补一发 `Esc` 关掉。
+宿主会把这坨 JSON 写进 `~/.dsh/dsh-screen-capture/dev/`，读文件即可断言，全程不碰用户的鼠标。
+**验完必须整段删掉并重新 build**，最后用
+`Select-String -Pattern 'TEMP-PROBE|runPickerProbe'` 与 `build-client.mjs --check` 收口。
 
 ## 本地开发挂载与热更
 
@@ -227,7 +307,7 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 | --- | --- |
 | `lib/client.body.js` + 重新生成 `lib/client.js` | client-hmr 每约 500ms `stat` 轮询客户端 bundle，文件一变就推 SSE `rebuilt` 帧，浏览器侧 `modules.reload(id, rev)` 重新执行；约 1 秒后界面自动换新代码，不用重启 |
 | `lib/index.js`（宿主半边） | **不在**热更机制里，必须完整重启 DSH |
-| `lib/shot.ps1` / `lib/recorder.py` | 每次操作都重新起进程，脚本内容在启动时读取，改完不用重启宿主 |
+| `lib/shot.ps1` / `lib/sources.ps1` / `lib/recorder.py` | 每次操作都重新起进程，脚本内容在启动时读取，改完不用重启宿主 |
 
 ## 路由参数与默认值
 
@@ -240,6 +320,8 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 | `record/start` | `maxEdge` | `1280` | `0` – `2560` |
 | `record/start` | `quality` | `72` | `40` – `95` |
 | `record/start` | `seconds` | `300` | `5` – `900`（`REC_MAX_SECONDS`） |
+| `record/start` | `x` / `y` / `w` / `h` | 不给 = 整个虚拟桌面 | 四个都给才算数；`w`/`h` 至少 8，坐标夹在 ±100000 |
+| `record/start` | `hwnd` | `0`（不跟窗口） | 0 – `Number.MAX_SAFE_INTEGER`；只对「窗口」源有效 |
 | `save` | `dir` / `file` | `frames` / `frame.jpg` | 只允许 `[A-Za-z0-9._-]`，最多 96 字符，去开头的点 |
 
 客户端把 localStorage 的 `maxDimension` 映射到路由的 `maxEdge`，`quality`（0.3–0.95）乘以 100 传过去。注意客户端允许低到 `0.3`，但宿主路由把 `quality` 夹到 `40–95`，所以极端低质量会被抬到 `40`。

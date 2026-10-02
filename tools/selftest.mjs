@@ -270,6 +270,11 @@ const sandbox = {
     }
   },
   Blob: class {},
+  // 浏览器里 fetch 是全局的；沙箱里不给它，apply() 会立刻 ReferenceError，
+  // 于是「插不出按钮」这种自检结论全是假阳性（2026-10-02 修）。
+  // 这里给一个永远 reject 的替身：走完「宿主路由不可用」这条真实失败分支。
+  fetch: () => Promise.reject(new Error('selftest: no network')),
+  URL,
   Promise,
   Math,
   Date,

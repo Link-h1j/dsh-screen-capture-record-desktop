@@ -18,6 +18,16 @@ opencv 解 VP8）：视频是完整证据，少了哪一帧还能重抽，抽帧
 ----
     python recorder.py [--fps 5] [--max-edge 1280] [--quality 72]
                        [--seconds 600] [--out FILE] [--no-cursor]
+                       [--region X,Y,W,H] [--hwnd 0x1234]
+
+    --region 只录虚拟桌面上的一块（物理像素，虚拟桌面坐标系；多显示器时
+    原点可能是负数）。不给就是整个虚拟桌面 —— 也就是老行为。
+    --hwnd 给一个窗口句柄时，每帧按该窗口**当前**的矩形录（窗口被拖动/改
+    大小后跟着走）；窗口最小化/失效时退回 --region 给的矩形。
+
+    注意：录的是**屏幕上的那块像素**，不是窗口自己的画面 —— 别的窗口挡在
+    前面就会录到挡着的那个（getDisplayMedia 那种"窗口流"做不到，宿主机只能
+    抓屏）。所以录窗口时别把别的窗口摞上去。
 
     --out 省略时写 stdout（生产路径：Node 把 stdout 接进 ffmpeg 的 stdin）。
     --out 给文件时用于离线自测（Windows 的 PowerShell 管道会毁二进制，别用 > 重定向）。
@@ -33,6 +43,7 @@ opencv 解 VP8）：视频是完整证据，少了哪一帧还能重抽，抽帧
 
 import argparse
 import ctypes
+from ctypes import wintypes
 import io
 import os
 import sys
@@ -44,6 +55,42 @@ from PIL import Image, ImageDraw, ImageGrab
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+_user32 = ctypes.windll.user32 if hasattr(ctypes, "windll") else None
+_dwmapi = None
+try:
+    _dwmapi = ctypes.windll.dwmapi
+except Exception:
+    _dwmapi = None
+
+if _user32 is not None:
+    # HWND is 64-bit on x64: declare argtypes so ctypes does not truncate it to int.
+    _user32.IsWindow.argtypes = [wintypes.HWND]
+    _user32.IsWindow.restype = wintypes.BOOL
+    _user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    _user32.IsWindowVisible.restype = wintypes.BOOL
+    _user32.IsIconic.argtypes = [wintypes.HWND]
+    _user32.IsIconic.restype = wintypes.BOOL
+    _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+    _user32.GetWindowRect.restype = wintypes.BOOL
+    _user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
+    _user32.GetCursorPos.restype = wintypes.BOOL
+    _user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    _user32.GetSystemMetrics.restype = ctypes.c_int
 
 
 def make_dpi_aware():
@@ -61,11 +108,84 @@ def cursor_pos():
     """当前鼠标位置（物理像素）；拿不到返回 None。"""
     try:
         pt = POINT()
-        if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+        if _user32 is not None and _user32.GetCursorPos(ctypes.byref(pt)):
             return int(pt.x), int(pt.y)
     except Exception:
         pass
     return None
+
+
+def virtual_origin():
+    """虚拟桌面左上角（多显示器时可能是负数）—— 与 ImageGrab(all_screens=True) 对齐。"""
+    try:
+        if _user32 is not None:
+            return (
+                int(_user32.GetSystemMetrics(SM_XVIRTUALSCREEN)),
+                int(_user32.GetSystemMetrics(SM_YVIRTUALSCREEN)),
+            )
+    except Exception:
+        pass
+    return (0, 0)
+
+
+def parse_region(text):
+    """'x,y,w,h' -> (x, y, w, h)；空或非法返回 None。"""
+    if not text:
+        return None
+    try:
+        parts = [int(float(p.strip())) for p in str(text).split(",")]
+    except Exception:
+        return None
+    if len(parts) != 4:
+        return None
+    x, y, w, h = parts
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, w, h)
+
+
+def window_rect(hwnd):
+    """窗口当前矩形（物理像素）；最小化 / 隐藏 / 句柄失效时返回 None。
+
+    先问 DWM 的 extended frame bounds：GetWindowRect 在最大化窗口上会把
+    不可见的拖拽边框算进去（四周多出几个像素的黑边）。
+    """
+    if not hwnd or _user32 is None:
+        return None
+    try:
+        if not _user32.IsWindow(hwnd):
+            return None
+        if not _user32.IsWindowVisible(hwnd):
+            return None
+        if _user32.IsIconic(hwnd):
+            return None
+        r = RECT()
+        got = False
+        if _dwmapi is not None:
+            try:
+                if (
+                    _dwmapi.DwmGetWindowAttribute(
+                        wintypes.HWND(hwnd),
+                        DWMWA_EXTENDED_FRAME_BOUNDS,
+                        ctypes.byref(r),
+                        ctypes.sizeof(r),
+                    )
+                    == 0
+                    and r.right > r.left
+                ):
+                    got = True
+            except Exception:
+                got = False
+        if not got:
+            if not _user32.GetWindowRect(hwnd, ctypes.byref(r)):
+                return None
+        w = int(r.right - r.left)
+        h = int(r.bottom - r.top)
+        if w < 40 or h < 40:
+            return None
+        return (int(r.left), int(r.top), w, h)
+    except Exception:
+        return None
 
 
 CURSOR_SHAPE = [
@@ -117,6 +237,8 @@ def main():
     ap.add_argument("--seconds", type=float, default=600.0)
     ap.add_argument("--out", default="")
     ap.add_argument("--no-cursor", action="store_true")
+    ap.add_argument("--region", default="")
+    ap.add_argument("--hwnd", default="")
     args = ap.parse_args()
 
     if args.fps <= 0:
@@ -126,7 +248,24 @@ def main():
         print("recorder: --max-edge 不能为负", file=sys.stderr)
         return 2
 
+    region = parse_region(args.region)
+    if args.region and not region:
+        print("recorder: --region 需要 x,y,w,h 形式", file=sys.stderr)
+        return 2
+    hwnd = 0
+    try:
+        hwnd = int(str(args.hwnd), 0) if args.hwnd else 0
+    except Exception:
+        print("recorder: --hwnd 不是合法句柄", file=sys.stderr)
+        return 2
+
     make_dpi_aware()
+    vox, voy = virtual_origin()
+    print(
+        "recorder: 虚拟桌面原点 (%d,%d) 区域 %s 窗口 %s"
+        % (vox, voy, region if region else "整个桌面", hwnd or "无"),
+        file=sys.stderr,
+    )
 
     sink = open(args.out, "wb") if args.out else sys.stdout.buffer
     stop_file = (args.out + ".stop") if args.out else None
@@ -162,6 +301,27 @@ def main():
                 time.sleep(period)
                 continue
 
+            # 本帧要录的那一块：优先跟窗口（窗口动/改大小都跟着），拿不到就退回
+            # 选择时的固定矩形，都没有就是整个虚拟桌面。
+            box = window_rect(hwnd) if hwnd else None
+            if not box:
+                box = region
+            if box:
+                bx, by, bw, bh = box
+                x1 = max(0, bx - vox)
+                y1 = max(0, by - voy)
+                x2 = min(img.width, bx - vox + bw)
+                y2 = min(img.height, by - voy + bh)
+                if x2 - x1 >= 4 and y2 - y1 >= 4:
+                    img = img.crop((x1, y1, x2, y2))
+                    ox, oy = vox + x1, voy + y1
+                else:
+                    # 区域完全跑到屏幕外了（窗口挪走/显示器拔了）：别产出 0x0，
+                    # 这一帧退回整屏，下帧也许就回来了。
+                    ox, oy = vox, voy
+            else:
+                ox, oy = vox, voy
+
             if args.max_edge > 0 and max(img.size) > args.max_edge:
                 scale = args.max_edge / float(max(img.size))
                 img = img.resize(
@@ -169,7 +329,9 @@ def main():
                     Image.LANCZOS,
                 )
             if not args.no_cursor:
-                img = draw_cursor(img, cursor_pos())
+                cur = cursor_pos()
+                # 光标是虚拟桌面坐标：按本帧的实际原点平移，否则区域录制里会画到框外
+                img = draw_cursor(img, (cur[0] - ox, cur[1] - oy) if cur else None)
 
             buf = io.BytesIO()
             img.save(buf, "JPEG", quality=args.quality)

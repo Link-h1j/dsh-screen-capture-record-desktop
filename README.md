@@ -9,21 +9,40 @@
 这个插件就是把这一步压缩成两个动作 —— **录一段、截一张，直接塞进输入框**：
 
 - 录屏产出**一个 `.webm` 视频**（不是一堆图片），抽不抽帧、抽多密由会话里的 agent 按需决定；
-- 截图带**选区**，框哪算哪；
+- 截图带**选区**，框哪算哪；框完手一松就能直接用**画笔 / 矩形 / 箭头 / 文字**在图上圈重点，画完点一次「用这张」进附件；
 - 两者都走 DSH 现成的附件通道，在输入框里补一句话就能发出去。
 
 模型拿到的是**第一手画面**，而不是一段转述。少一轮误解，就少一次返工 —— 这是它唯一的设计目标。
 
-**Quick start (English).** A DSH Desktop plugin that adds two buttons to the left of the dictation button in the composer toolbar. **Record**: click to start, click again (or press `Esc`) to stop — the host process captures frames and encodes them into a single `.webm` video that is attached to your message. **Screenshot**: capture the full screen, drag a region in the picker, and attach the crop. It exists to make human-agent communication cheaper: instead of describing a UI problem in words, hand the model the actual picture. Requires Windows with PowerShell 5.1+, Python 3 with Pillow, and an ffmpeg build that includes the `image2pipe` demuxer, the `mjpeg` decoder, the `libvpx_vp8` encoder and the `webm` muxer — see [前置条件](#前置条件). Install with `dsh plugin add dsh-screen-capture-record-desktop`, then fully restart DSH.
+**Quick start (English).** A DSH Desktop plugin that adds two buttons to the left of the dictation button in the composer toolbar. **Record**: click, pick what to record (whole desktop / a monitor / a window / a custom region), click again (or press `Esc`) to stop — the host process captures frames and encodes them into a single `.webm` video that is attached to your message. **Screenshot**: capture the full screen, drag a region in the picker — the annotation toolbar (pen / rectangle / arrow / text) appears the moment you release the drag, so you can mark the picture up right away and commit it with a single 「用这张」. It exists to make human-agent communication cheaper: instead of describing a UI problem in words, hand the model the actual picture. Requires Windows with PowerShell 5.1+, Python 3 with Pillow, and an ffmpeg build that includes the `image2pipe` demuxer, the `mjpeg` decoder, the `libvpx_vp8` encoder and the `webm` muxer — see [前置条件](#前置条件). Install with `dsh plugin add dsh-screen-capture-record-desktop`, then fully restart DSH.
 
 ## 两个按钮
 
 | 按钮 | 图标 | 操作 | 产物 |
 | --- | --- | --- | --- |
-| **录屏** | 显示器 + 录制圆点 | 点一下开始（按钮右上角出现红色计时徽标）；再点一下结束；录制中按 `Esc` 也可结束；到达最长时长会自动结束 | 一个 `.webm` 视频（VP8），自动塞进输入框附件 |
-| **截图** | 相机 | 点一下抓整屏 → 弹出选区浮层 → 确认后进附件 | 一张 JPEG，自动塞进输入框附件 |
+| **录屏** | 显示器 + 录制圆点 | 点一下弹「选择要录制的内容」（整个桌面 / 某个显示器 / 某个窗口 / 自定义区域）；开始后按钮右上角出现红色计时徽标；再点一下结束；录制中按 `Esc` 也可结束；到达最长时长会自动结束 | 一个 `.webm` 视频（VP8），自动塞进输入框附件 |
+| **截图** | 相机 | 点一下抓整屏 → 弹出浮层 → 拖框选（**松手就能画**）→「用这张」进附件 | 一张 JPEG（可带标注），自动塞进输入框附件 |
 
 两个按钮的悬浮提示常态只有两个字（「录屏」/「截图」），录制中显示「停止录屏」；只有宿主路由没挂上时才补一句原因。
+
+### 录屏：先选「录哪一个」
+
+点「录屏」先弹一个框（不是直接开录）：
+
+| 选项 | 录什么 |
+| --- | --- |
+| 整个桌面（所有显示器） | 整个虚拟桌面（多显示器一起），也就是老行为 |
+| 显示器 N | 只录那一台显示器 |
+| 窗口 | 只录那一个窗口；**跟着窗口走** —— 录制中窗口被拖动 / 改大小都跟着 |
+| 自定义区域… | 回到拖框浮层，拖哪录哪（`Enter` /「用这张」确认） |
+
+- 每一项都带**缩略图**（用一张整屏底图按各源矩形裁出来的小图），窗口多的时候好认。
+- **上次选的那个会预选上**并自动滚进视野，第二次录同一个东西就是两次点击。
+- 选中即开录，`Esc` /「取消」什么都不做；下方提示条会写明正在录的是哪一个。
+- 不想每次弹框：DevTools 里 `localStorage['dsh-capture.askSource'] = '0'`（直接用上次选的）。
+
+> ⚠ 录窗口录的是**屏幕上那块像素**：别的窗口摞在它上面就会录到摞上去的那个
+> （宿主机只能抓屏，做不到浏览器 `getDisplayMedia` 那种窗口流）。所以录窗口时别把别的窗口盖上去。
 
 ### 录屏中直接点「发送」或按回车
 
@@ -34,19 +53,37 @@
 - 万一视频没能挂进附件，这次发送会被**取消**（不会发出一条没有视频的消息），并把磁盘路径告诉你。
 - 生成中那个按钮仍然是「停止生成」，点它只会打断 agent，不会触发这套流程。
 - 想关掉这个联动：DevTools 里 `localStorage['dsh-screen-capture.sendStopsRec'] = '0'`。
+- 录屏中按 `Esc`（或再点一次「录屏」）就是单纯停止录屏，视频照常进附件。
 
-### 快捷键与选区浮层
+### 截图：选区 + 标注是**同一个浮层**
+
+点「截图」后是一层搞定，中间不需要再确认一次：
+
+```
+整屏铺开（92%×80% 缩放展示）
+      │
+      ├─ 拖框选 ──→ 手一松，底部工具栏立刻出现（画笔默认选中）──→ 直接在图上画
+      │                                                        │
+      │                                                        └─ 画完点「用这张」→ 裁切 + 合成标注 → 进附件
+      │
+      ├─ 单击不拖 ─→ 选中整屏（留在选区态，按 Enter /「用这张」再用）
+      └─ Esc / 右键 / 点遮罩空白 ─→ 取消
+```
 
 | 场景 | 按键 / 操作 | 含义 |
 | --- | --- | --- |
-| 录屏中 | `Esc` | 停止录屏 |
-| 录屏中 | 点「发送」或按 `Enter` | 停录 + 视频进附件 + 一并发送 |
-| 选区浮层 | 按住左键拖动 | 框选一块区域 |
-| 选区浮层 | 单击（不拖动） | 选中**整屏** |
-| 选区浮层 | `Enter` 或「用这张」 | 确认当前选区 |
-| 选区浮层 | `Esc`、右键、点遮罩空白处、或「取消」 | 取消截图 |
+| 浮层（选区态） | 按住左键拖动 | 框选一块区域，**松手即进入标注态** |
+| 浮层（选区态） | 单击（不拖动） | 选中**整屏** |
+| 浮层（选区态） | `Enter` 或「用这张」 | 用当前选区，进入标注态（关了标注则直接出图） |
+| 浮层（标注态） | 工具栏 | 画笔 / 矩形 / 箭头 / 文字、撤销 / 清空、7 种颜色、细中粗三档线宽 |
+| 浮层（标注态） | `Ctrl+Z` | 撤销上一笔 |
+| 浮层（标注态） | 「重选区域」 | 回到选区态重新框（已画的笔画留着，按新框重新裁剪） |
+| 浮层 | `Enter` 或「用这张」 | 确认并进附件 |
+| 浮层 | `Esc`、右键、点遮罩空白处、或「取消」 | 取消截图 |
 
-选区浮层会在页面里按 92% × 80% 的视口比例缩放展示整屏底图，框选后再按原始分辨率裁切，所以框出来的图不会因为展示缩放而变糊。
+画的笔画**只在选区内生效**（画笔不会污染框外），合成时按原始像素重算，所以标注不会因为展示缩放而变糊。整个浮层用 DSH 自己的 design token 上色，浅色 / 深色主题都跟随系统。
+
+选区态按 92% × 80% 的视口比例缩放展示整屏底图，框选后再按原始分辨率裁切。
 
 ## 安装
 
@@ -122,6 +159,8 @@ ffmpeg -hide_banner -muxers  | findstr /i webm
 ```js
 localStorage['dsh-capture.fps']          = '5'
 localStorage['dsh-capture.picker']       = '1'
+localStorage['dsh-capture.annotate']     = '1'
+localStorage['dsh-capture.askSource']    = '1'
 localStorage['dsh-capture.maxDimension'] = '1280'
 localStorage['dsh-capture.quality']      = '0.72'
 localStorage['dsh-capture.maxSeconds']   = '180'
@@ -133,6 +172,8 @@ localStorage['dsh-capture.maxSeconds']   = '180'
 | `dsh-capture.maxDimension` | `1280` | `640` – `2560` | 录屏单帧长边上限（像素） |
 | `dsh-capture.quality` | `0.72` | `0.3` – `0.95` | 帧 / 截图的 JPEG 质量 |
 | `dsh-capture.picker` | `1`（开） | `0` / `false` 关闭，其余视为开 | 截图是否弹出选区浮层；`0` = 直接抓整屏进附件 |
+| `dsh-capture.annotate` | `1`（开） | `0` / `false` 关闭，其余视为开 | 选区里是否带标注工具栏（画笔/矩形/箭头/文字）；`0` = 拖框后必须点「用这张」确认，不出工具栏 |
+| `dsh-capture.askSource` | `1`（开） | `0` / `false` 关闭，其余视为开 | 录屏前是否弹「选择要录制的内容」框；`0` = 直接用上次选的那个源开录（没记录过就是整个桌面） |
 | `dsh-capture.maxSeconds` | `180` | `5` – `900` | 录屏最长秒数，到点自动结束 |
 
 参数越界会被夹到合法范围或退回默认值，不会报错。截图时客户端会自动把质量抬高 `0.1`（上限 `0.92`），并用不小于 `1920` 的长边上限裁剪，保证框选出来的图够清晰。
@@ -173,6 +214,11 @@ localStorage['dsh-capture.maxSeconds']   = '180'
 | 附件里有图 / 有视频，但没看到提示条 | 自绘提示条被更高层级的浮层盖住，或没渲染出来 | 以附件卡片和磁盘文件为准；在 DevTools 里查 `[data-dsh-capture-toast]` 是否在 DOM 中及其层级 |
 | 提示条显示「宿主路由没挂上（…）：完整重启桌面版后再生效」 | 宿主进程没加载到新路由：装完或更新后没完整重启，或插件未启用 | 完整重启 DSH；在「插件」页确认插件已启用、没有被回滚 |
 | 点「截图」直接就是整屏，没有框选 | `dsh-capture.picker` 被设成了 `0`；或在浮层里只是单击（单击 = 整屏，设计如此）；或框得太小（小于 4px 会回退成整屏） | 把 `dsh-capture.picker` 设回 `1`，用拖动框选 |
+| 框完松手没有出现画笔工具栏 | `dsh-capture.annotate` 被设成了 `0`（那时是「拖框 + 用这张」的老行为，设计如此） | 把 `dsh-capture.annotate` 删掉或设回 `1` |
+| 点「录屏」没弹选择框，直接就开始录了 | `dsh-capture.askSource` 被设成了 `0`，或宿主还没挂上 `/sources` 路由（装完没完整重启） | 设回 `1`；完整重启 DSH（按钮会先提示一句"这次按整个桌面录"） |
+| 选择框里没有我要的窗口 | 窗口不可见 / 已最小化 / 面积小于 120×80 / 被 DWM 标记为 cloaked（UWP 幽灵窗）都不会列出来 | 先把窗口恢复到桌面再看；或选「自定义区域…」手动框 |
+| 录窗口时录到了别的窗口 | 录的是屏幕上那块像素，被摞在上面了 | 把要录的窗口切到前面；或改录「自定义区域」 |
+| 画到选区外面的笔画看不见了 | 标注只在选区内生效（所见即所得，不会偷偷进图） | 想要更大范围就点「重选区域」把框拉大再画 |
 | 截图黑屏 / 有黑边 / 内容错位 | 多显示器：抓的是整个虚拟桌面的联合矩形，显示器排列带负坐标或各自缩放不同时会留下黑边；DPI：抓屏进程若没声明 DPI 感知会得到缩放模糊图 | 确认显示器的虚拟桌面矩形；`DSH_CAPTURE_POWERSHELL` 指向真正的 `powershell.exe`（插件会主动声明 DPI 感知） |
 | 录出来的画面没有鼠标指针 | 光标当时不在虚拟桌面范围内 | 默认会把光标画进每一帧；把鼠标移回捕获范围即可 |
 | 视频录好了，但提示「取回失败」 | 浏览器那一侧没拿到视频字节 | 视频仍在磁盘上（提示里带完整路径），可以直接拖进输入框 |

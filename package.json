@@ -1,7 +1,7 @@
 {
   "name": "dsh-screen-capture-record-desktop",
-  "version": "0.3.0",
-  "description": "DSH 桌面版输入框工具条插件：在「听写」左边加「录屏」与「截图」两个按钮 —— 截图带选区，录屏产出一个 .webm 视频并自动进附件。Screen capture & recording buttons for the DSH desktop composer.",
+  "version": "0.5.0",
+  "description": "DSH 桌面版输入框工具条插件：在「听写」左边加「录屏」与「截图」两个按钮 —— 录屏前先弹「选择要录制的内容」框（屏幕/窗口/自定义区域），截图带选区 + 标注（拖完框选手一松就能画）。Screen capture & recording buttons for the DSH desktop composer.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -19,6 +19,7 @@
     "lib/client.body.js",
     "lib/recorder.py",
     "lib/shot.ps1",
+    "lib/sources.ps1",
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
@@ -56,7 +57,11 @@
     "build": "node tools/build-client.mjs",
     "check": "node tools/build-client.mjs --check",
     "bundle:check": "node tools/check-bundle.mjs",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "check:sources": "node tools/check-capture-sources.mjs",
+    "check:live": "node tools/check-live-record.mjs",
+    "e2e": "node tools/e2e-annotate.mjs",
+    "e2e:pick": "node tools/e2e-record-picker.mjs"
   },
   "dsh": {
     "bundle": {
