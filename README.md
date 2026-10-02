@@ -16,6 +16,22 @@
 
 **Quick start (English).** A DSH Desktop plugin that adds two buttons to the left of the dictation button in the composer toolbar. **Record**: click, pick what to record (whole desktop / a monitor / a window / a custom region), click again (or press `Esc`) to stop — the host process captures frames and encodes them into a single `.webm` video that is attached to your message. **Screenshot**: capture the full screen, drag a region in the picker — the annotation toolbar (pen / rectangle / arrow / text) appears the moment you release the drag, so you can mark the picture up right away and commit it with a single 「用这张」. It exists to make human-agent communication cheaper: instead of describing a UI problem in words, hand the model the actual picture. Requires Windows with PowerShell 5.1+, Python 3 with Pillow, and an ffmpeg build that includes the `image2pipe` demuxer, the `mjpeg` decoder, the `libvpx_vp8` encoder and the `webm` muxer — see [前置条件](#前置条件). Install with `dsh plugin add dsh-screen-capture-record-desktop`, then fully restart DSH.
 
+### 给 Agent：先看，再动手
+
+截图 / 录屏是**给模型看的证据**，不是让人转述的附件。任何 agent 拿到它们时，先把它们真读进上下文再回答：
+
+```bash
+node tools/extract-frames.mjs <录屏.webm>   # 视频抽帧：打印每帧绝对路径 + 时间戳 + 尺寸（默认每 3 秒一帧、去重、最多 12 帧）
+node tools/extract-frames.mjs <截图.jpg>    # 图片：直接给出可读路径
+```
+
+拿到路径后**逐帧读图**（DSH 里是 `read_image`），**看完再动手**。加 `--json` 给机器读；
+`--fps 1/5`、`--max 20`、`--width 1600` 可调。
+
+看的时候要注意的三件事（否则会误判）写在 [AGENTS.md](AGENTS.md) 里：录屏前几秒压着插件自己的
+「正在录…」提示条；提示条文案本身就是**录制源的证据**（整桌面 / 窗口「标题」/ 自定义区域 WxH）；
+截图上的标注往往就是用户要指的东西。
+
 ## 两个按钮
 
 | 按钮 | 图标 | 操作 | 产物 |
