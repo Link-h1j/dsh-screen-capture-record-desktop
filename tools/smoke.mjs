@@ -28,9 +28,13 @@ import {
   apply,
   handleRecordFile,
   handleRecordStart,
+  handleRecordStatus,
   handleRecordStop,
+  handleReveal,
   handleSave,
-  handleShot
+  handleShot,
+  handleSources,
+  handleWindowState
 } from '../lib/index.js'
 
 /**
@@ -171,27 +175,35 @@ console.log('抓屏路由冒烟测试')
 
   apply(ctx)
   check(
-    'apply 挂上全部 5 条 prefix 路由（shot/save/record×3）',
-    calls.length === 5 &&
+    'apply 挂上全部 9 条 prefix 路由（shot/save/sources/window/reveal/record×4）',
+    calls.length === 9 &&
       calls.every((c) => c.kind === 'prefix') &&
       calls[0].path === '/plugins/dsh-screen-capture-record-desktop/shot' &&
       calls[1].path === '/plugins/dsh-screen-capture-record-desktop/save' &&
-      calls[2].path === '/plugins/dsh-screen-capture-record-desktop/record/start' &&
-      calls[3].path === '/plugins/dsh-screen-capture-record-desktop/record/stop' &&
-      calls[4].path === '/plugins/dsh-screen-capture-record-desktop/record/file',
+      calls[2].path === '/plugins/dsh-screen-capture-record-desktop/sources' &&
+      calls[3].path === '/plugins/dsh-screen-capture-record-desktop/window' &&
+      calls[4].path === '/plugins/dsh-screen-capture-record-desktop/reveal' &&
+      calls[5].path === '/plugins/dsh-screen-capture-record-desktop/record/start' &&
+      calls[6].path === '/plugins/dsh-screen-capture-record-desktop/record/stop' &&
+      calls[7].path === '/plugins/dsh-screen-capture-record-desktop/record/file' &&
+      calls[8].path === '/plugins/dsh-screen-capture-record-desktop/record/status',
     JSON.stringify(calls.map((c) => c.path))
   )
   check(
     'handler 分别正确',
     calls[0].handler === handleShot &&
       calls[1].handler === handleSave &&
-      calls[2].handler === handleRecordStart &&
-      calls[3].handler === handleRecordStop &&
-      calls[4].handler === handleRecordFile
+      calls[2].handler === handleSources &&
+      calls[3].handler === handleWindowState &&
+      calls[4].handler === handleReveal &&
+      calls[5].handler === handleRecordStart &&
+      calls[6].handler === handleRecordStop &&
+      calls[7].handler === handleRecordFile &&
+      calls[8].handler === handleRecordStatus
   )
 
   apply(ctx)
-  check('重复 apply 只挂一次（不会撞 duplicate route）', calls.length === 5, 'calls=' + calls.length)
+  check('重复 apply 只挂一次（不会撞 duplicate route）', calls.length === 9, 'calls=' + calls.length)
 }
 
 // 7. 落盘路由：POST 一段字节，验证文件真的落盘 + 路径消毒
@@ -255,14 +267,56 @@ console.log('抓屏路由冒烟测试')
   }
 }
 
-// 8. 没在录时 stop 应 404，而不是假装成功
+// 8. /reveal：提示条上「打开文件夹」的宿主路由（dryRun 只校验，不真起资源管理器）
+{
+  const base = path.resolve(process.env.DSH_CAPTURE_DIR)
+  const reveal = async (query) => {
+    const res = fakeRes()
+    await handleReveal(fakeReq('/plugins/dsh-screen-capture-record-desktop/reveal' + query), res)
+    let json = null
+    try {
+      json = JSON.parse(res.body().toString('utf8'))
+    } catch (e) {
+      json = null
+    }
+    return { status: res.status, json }
+  }
+
+  // 落盘根目录里的真实文件 + 目录
+  fs.mkdirSync(base, { recursive: true })
+  const insideFile = path.join(base, 'reveal-smoke.txt')
+  fs.writeFileSync(insideFile, 'x')
+  const insideDir = path.join(base, 'reveal-smoke-dir')
+  fs.mkdirSync(insideDir, { recursive: true })
+
+  const okFile = await reveal('?dryRun=1&path=' + encodeURIComponent(insideFile))
+  check('reveal 校验落盘目录内的文件 → 200 dryRun', okFile.status === 200 && okFile.json && okFile.json.ok === true && okFile.json.dir === false, JSON.stringify(okFile.json))
+
+  const okDir = await reveal('?dryRun=1&path=' + encodeURIComponent(insideDir))
+  check('reveal 校验落盘目录内的子目录 → dir=true', okDir.status === 200 && okDir.json && okDir.json.dir === true, JSON.stringify(okDir.json))
+
+  const outside = await reveal('?dryRun=1&path=' + encodeURIComponent(path.join(path.dirname(base), 'evil.txt')))
+  check('reveal 拒绝落盘目录外的路径 → 403', outside.status === 403, 'status=' + outside.status)
+
+  const missing = await reveal('?dryRun=1&path=' + encodeURIComponent(path.join(base, 'not-exist-' + Date.now() + '.webm')))
+  check('reveal 文件不存在 → 404', missing.status === 404, 'status=' + missing.status)
+
+  try {
+    fs.rmSync(insideFile, { force: true })
+    fs.rmSync(insideDir, { recursive: true, force: true })
+  } catch (e) {
+    /* 清理失败无所谓 */
+  }
+}
+
+// 9. 没在录时 stop 应 404，而不是假装成功
 {
   const res = fakeRes()
   await handleRecordStop(fakeReq('/plugins/dsh-screen-capture-record-desktop/record/stop', 'POST'), res)
   check('无录制时 record/stop 返回 404', res.status === 404, 'status=' + res.status)
 }
 
-// 9. 录屏路由：真抓几秒 → 真 WebM 视频
+// 10. 录屏路由：真抓几秒 → 真 WebM 视频
 {
   const startRes = fakeRes()
   await handleRecordStart(

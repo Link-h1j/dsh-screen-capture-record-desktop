@@ -5,9 +5,10 @@
 ## 仓库结构
 
 ```
-lib/index.js          宿主半边：6 条 HTTP 路由（抓屏 / 落盘 / 录制源 / 开录 / 停录 / 取录像）
+lib/index.js          宿主半边：9 条 HTTP 路由（抓屏 / 落盘 / 录制源 / DSH 窗口清单 / 打开产物目录 / 开录 / 停录 / 取录像 / 录制状态）
 lib/shot.ps1          单帧抓屏（GDI，纯 ASCII）
 lib/sources.ps1       枚举可录制的源：虚拟桌面 / 显示器 / 顶层窗口（纯 ASCII）
+lib/window.ps1        藏 / 显 DSH 自己的顶层窗口（Win32，纯 ASCII；截图「隐藏DSH界面」用）
 lib/recorder.py       录屏抓帧（Pillow ImageGrab → MJPEG 流；支持 --region / --hwnd）
 lib/client.body.js    浏览器半边 —— 可读源码，改这个
 lib/client.js         由 build-client.mjs 生成，不要直接改
@@ -20,6 +21,7 @@ tools/check-capture-sources.mjs  宿主侧自测：源枚举 + --region/--hwnd/-
 tools/e2e-annotate.mjs  真机端到端：CDP 合成事件走「截图 → 拖框 → 松手出工具栏 → 落墨 → 用这张」
 tools/e2e-record-picker.mjs      真机端到端：录屏选源框（mock 模式验客户端，--live 真录并校验尺寸）
 tools/check-live-record.mjs      真宿主验收（不需要 CDP/页面）：真清单 + 区域/窗口录制 + 抽帧验尺寸
+tools/check-window-hide.mjs      真宿主验收（不需要 CDP/页面）：隐藏DSH界面 → 藏窗口 → 抓屏 → 恢复
 tools/check-bundle.mjs  安装前自检：复刻插件管理器的 inspect 判据
 tools/check-patch.mjs   手工挂载路线：校验 profile 的 cordis.patch.yml
 ```
@@ -45,6 +47,9 @@ setDisplayMediaRequestHandler((_r, cb) => cb({}));        // 屏幕共享 → �
 | --- | --- | --- |
 | `GET` | `/plugins/<name>/shot?probe=1` | 探活，返回 `{ok,capable,script}`，不抓屏 |
 | `GET` | `/plugins/<name>/shot?format=jpg\|png&maxEdge=&quality=` | 宿主跑 `shot.ps1` 抓整屏，直接回图片字节 |
+| `GET` | `/plugins/<name>/shot?...&hideDsh=1` | 先跑 `window.ps1` 藏掉 DSH 自己的窗口 → 抓屏 → 立刻恢复；响应头 `x-dsh-capture-hidden` / `x-dsh-capture-restored` 报告「藏没藏成」「窗口恢复没有」 |
+| `GET` | `/plugins/<name>/window` | 只读：当前 DSH 主进程的顶层窗口清单（`window.ps1 -Action state`，诊断/自检用，无副作用） |
+| `GET` | `/plugins/<name>/reveal?path=<绝对路径>[&dryRun=1]` | 在资源管理器里打开产物（文件=选中，目录=打开）；**只允许落盘根目录内的路径**，`dryRun` 只校验不真调起（自测用）。提示条上的「打开文件夹」用它 |
 | `POST` | `/plugins/<name>/save?dir=&file=` | 把请求体字节落盘到 `<DSH_HOME>\dsh-screen-capture\<dir>\<file>` |
 | `GET` | `/plugins/<name>/sources` | 宿主跑 `sources.ps1` 枚举可录制的源（虚拟桌面 / 显示器 / 窗口），页面上的选择框用它 |
 | `POST` | `/plugins/<name>/record/start?fps=&maxEdge=&quality=&seconds=&x=&y=&w=&h=&hwnd=` | 起 `recorder.py` → ffmpeg（VP8/WebM）管道；给了 `x/y/w/h` 就只录那一块，给了 `hwnd` 每帧跟着那个窗口 |
@@ -89,6 +94,57 @@ apply(ctx)
 `captureOverlay` 是 2026-10-02 由老的 `pickRegion` + `annotateShot` 合并来的：用户实测反馈
 「截图功能能不能在刚刚拖动框选的时候就能使用画笔」，两层之间那次多余的确认被删掉，
 现在拖框松手就是绘制态。`annotate=false` 时不出工具栏、退化成「拖框 + 用这张」的老行为。
+
+#### 截图里的「隐藏DSH界面」（藏窗口 → 抓屏 → 恢复）
+
+浮层工具栏那个开关的整条链路：
+
+```
+点击「隐藏DSH界面」
+  └─ hostShot({hideDsh:true})            GET /shot?...&hideDsh=1
+        └─ hideDshWindows()              window.ps1 -Action hide -OwnerPid <宿主父进程=桌面版主进程>
+        │     └─ 枚举该 pid 下的 Chrome_WidgetWin_* 顶层窗口 → 全藏
+        │        并记下哪些原来是最大化 / 最小化（"zoomed"/"iconic" 数组回给宿主）
+        ├─ sleep(120ms)                  给 DWM 一拍把窗口从合成画面里拿掉
+        ├─ runShot(file)                 此刻抓到的就是「没有 DSH」的桌面
+        └─ finally: showDshWindows()     window.ps1 -Action show -Hwnds… -ZoomedHwnds… -IconicHwnds…
+              └─ SW_SHOWNA + 逐个核对 IsWindowVisible；宿主再核对、失败重试一轮
+                  └─ 仍失败 → 界面明确提示「点托盘图标恢复」（响应头 restored=0）
+  浮层：replaceBitmap(newBitmap)          重算 dw/dh/k、重置选区与笔画、关掉旧 ImageBitmap
+```
+
+再点一次走普通 `hostShot()`（DSH 正常显示时抓），换回带 DSH 的底图；按钮高亮 + 提示条
+文字表示「当前这张里已隐藏 DSH」。
+
+三个真机踩出来的点：
+
+1. **`windowsHide` 起的 PowerShell 里 `ShowWindow(SW_SHOW)` 会静默失败**：spawn 默认
+   `windowsHide:true`（CREATE_NO_WINDOW）时，对别的进程窗口的 ShowWindow 会「返回成功但
+   `WS_VISIBLE` 不变」，窗口一直藏着且不报错（2026-10-20 实测复现）。解法：用 `SW_SHOWNA`
+   （显示但不激活）再 `SetForegroundWindow`；显示后必须自己 `IsWindowVisible` 核对，别信返回值。
+2. **最大化状态要自己记**：`SW_SHOW`/`SW_SHOWNA` 不保证还原最大化，实测会出现「藏一下
+   回来窗口变小了」。hide 步骤把原状态带回来，show 时补 `SW_MAXIMIZE`(3) /
+   `SW_SHOWMINNOACTIVE`(7)。
+3. **恢复失败比截图失败严重**：窗口藏着不回来，用户会以为程序坏了。所以宿主在 `finally`
+   里恢复、核对、重试，并把 `x-dsh-capture-restored` 交给界面；界面弹 15 秒提示让用户点
+   任务栏 / 托盘图标（桌面版托盘点击 = 显示主窗口，见 app.asar/lib/main.js）。
+
+`dsh web`（纯浏览器）没有「DSH 自己的窗口」，hide 返回 `ok:false`；界面如实提示
+「没找到可以隐藏的 DSH 窗口」，绝不假装成功。
+
+#### 提示条上的「打开文件夹」动作
+
+用户反馈「录完之后的黑框里面磁盘不能点进去」（2026-10-20）：完成提示条是
+`pointer-events:none`（照官方 Toast 的样式，避免挡住页面），所以里面的磁盘路径点不了。
+
+- `toast(text, ms, kind, action)` 第四个参数是 `{label, onClick}`；动作元素自己设
+  `pointer-events:auto` —— 父级 none 时子元素设 auto 仍然可命中，这是不破坏 Toast
+  「不挡页面」特性的做法；
+- 动作 = `revealAction(path)` → `GET /reveal?path=…` → 宿主
+  `spawn('explorer.exe', ['/select,'+file])`（目录直接传目录），`detached + unref`，不等 explorer；
+- 路由只接受落在 `captureDir()` 里的路径（`path.relative` 校验，防 `..`），否则 403 ——
+  不然就成了「让宿主打开任意文件 / 程序」的后门；
+- 老宿主（没重启、路由 404）上点击退化为「复制路径 + 明确说明」，不静默失败。
 
 ### 录屏数据流
 
@@ -255,6 +311,7 @@ node tools\e2e-annotate.mjs            # 真机端到端（需要带 --remote-de
 node tools\e2e-record-picker.mjs       # 录屏选源框（mock 模式，不需要重启宿主）
 node tools\e2e-record-picker.mjs --live   # 同上但用真清单真录（**需要宿主已完整重启**）
 node tools\check-live-record.mjs       # 真宿主验收：不需要 CDP，直接打路由（区域/窗口录制 + 抽帧验尺寸）
+node tools\check-window-hide.mjs --url http://127.0.0.1:<端口>   # 真宿主验收：隐藏DSH界面（窗口会闪约 1 秒）
 node tools\check-bundle.mjs            # 安装前自检：复刻插件管理器 inspect 判据
 node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（手工挂载路线）
 ```
@@ -295,6 +352,14 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 **验完必须整段删掉并重新 build**，最后用
 `Select-String -Pattern 'TEMP-PROBE|runPickerProbe'` 与 `build-client.mjs --check` 收口。
 
+**第二种无 CDP 验法（2026-10-20 用过，更干净）**：起一个无头 Chromium 打开**自己写的 harness 页**
+（假 composer 里放一个 `aria-label="开始录音"` 的按钮当锚点），页面里定义
+`window.__ModuleLoader__` 后 `<script src>` 加载**本地刚构建的 `lib/client.js`**，再把页面里的
+`fetch` 包一层、把 `/plugins/...` 请求前缀改成真宿主地址（`--disable-web-security` 起 Chrome，
+因为宿主插件路由只对首页做鉴权、`/plugins` 路由不需要页面 cookie）。这样就能用 CDP 点按钮、
+量尺寸、截图，**真宿主路由 + 真浏览器 + 真 build** 一起验，且完全不碰用户鼠标/真实页面。
+`--headless=new --remote-debugging-port=93xx --disable-web-security` 即可。
+
 ## 本地开发挂载与热更
 
 **挂载方式**：包声明成组合包（`dsh.bundle.patch`），由 profile 的 `dsh.profile.bundles` 名单决定启停。开发期通常把这个包目录用 junction / symlink 映进 profile 的模块目录，再把包名写进 profile `package.json` 的 `dsh.profile.bundles`，然后**完整重启** DSH。
@@ -307,7 +372,7 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 | --- | --- |
 | `lib/client.body.js` + 重新生成 `lib/client.js` | client-hmr 每约 500ms `stat` 轮询客户端 bundle，文件一变就推 SSE `rebuilt` 帧，浏览器侧 `modules.reload(id, rev)` 重新执行；约 1 秒后界面自动换新代码，不用重启 |
 | `lib/index.js`（宿主半边） | **不在**热更机制里，必须完整重启 DSH |
-| `lib/shot.ps1` / `lib/sources.ps1` / `lib/recorder.py` | 每次操作都重新起进程，脚本内容在启动时读取，改完不用重启宿主 |
+| `lib/shot.ps1` / `lib/sources.ps1` / `lib/window.ps1` / `lib/recorder.py` | 每次操作都重新起进程，脚本内容在启动时读取，改完不用重启宿主（`window.ps1` 是每次 hide/show 现起一个 PowerShell，所以只改它不需要重启） |
 
 ## 路由参数与默认值
 
@@ -316,6 +381,9 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 | `shot` | `format` | `jpg` | `jpg` / `png` |
 | `shot` | `maxEdge` | `0`（原生分辨率） | `0` – `4096` |
 | `shot` | `quality` | `82` | `1` – `100` |
+| `shot` | `hideDsh` | `0`（不藏 DSH） | 非 `0`/`false` 即为真；仅桌面版有效，藏成功与否看响应头 `x-dsh-capture-hidden` |
+| `reveal` | `path` | 必填 | 绝对路径，且解析后必须落在 `captureDir()` 内（落盘根目录） |
+| `reveal` | `dryRun` | 不给（真打开） | 非空即只校验不调起资源管理器（自测用） |
 | `record/start` | `fps` | `5` | `1` – `15` |
 | `record/start` | `maxEdge` | `1280` | `0` – `2560` |
 | `record/start` | `quality` | `72` | `40` – `95` |
@@ -343,6 +411,7 @@ node tools\check-patch.mjs             # 校验 profile 的 cordis.patch.yml（�
 | --- | --- |
 | 单帧抓屏 `maxEdge=0` | 3840×2160 JPEG ≈ 430 KB / ≈ 930 ms |
 | 单帧抓屏 `maxEdge=1440` | 1440×810 ≈ 70 KB / ≈ 940 ms |
+| 隐藏抓屏 `hideDsh=1`（含藏窗口 + 抓屏 + 恢复） | ≈ 1.0 – 1.1 s，其中 DSH 窗口不可见约 1 秒 |
 | 录屏 `fps=5 maxEdge=640` 3 秒 | `rec-*.webm` ≈ 32 KB，13 帧 / 2.6 s / 5.00 fps，EBML 合法 |
 
 单帧抓屏慢在 PowerShell 启动（约 900 ms），所以**截图**够用；**录屏**走的是常驻 Python + ffmpeg 管道，不受这个限制。

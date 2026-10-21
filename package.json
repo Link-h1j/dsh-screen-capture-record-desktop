@@ -1,7 +1,7 @@
 {
   "name": "dsh-screen-capture-record-desktop",
-  "version": "0.5.0",
-  "description": "DSH 桌面版输入框工具条插件：在「听写」左边加「录屏」与「截图」两个按钮 —— 录屏前先弹「选择要录制的内容」框（屏幕/窗口/自定义区域），截图带选区 + 标注（拖完框选手一松就能画）。Screen capture & recording buttons for the DSH desktop composer.",
+  "version": "0.6.0",
+  "description": "DSH 桌面版输入框工具条插件：在「听写」左边加「录屏」与「截图」两个按钮 —— 录屏前先弹「选择要录制的内容」框（屏幕/窗口/自定义区域，可折叠、可收起成小横条），截图带选区 + 标注（拖完框选手一松就能画），还能一键隐藏 DSH 界面截到被它挡住的内容。Screen capture & recording buttons for the DSH desktop composer.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -20,6 +20,7 @@
     "lib/recorder.py",
     "lib/shot.ps1",
     "lib/sources.ps1",
+    "lib/window.ps1",
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
@@ -61,6 +62,7 @@
     "smoke": "node tools/smoke.mjs",
     "check:sources": "node tools/check-capture-sources.mjs",
     "check:live": "node tools/check-live-record.mjs",
+    "check:window": "node tools/check-window-hide.mjs",
     "e2e": "node tools/e2e-annotate.mjs",
     "e2e:pick": "node tools/e2e-record-picker.mjs"
   },
