@@ -115,6 +115,10 @@ class FakeNode {
     const idx = list.indexOf(this)
     return idx === -1 || idx + 1 >= list.length ? null : list[idx + 1]
   }
+  /** 真 DOM 里 parentElement 与 parentNode 的区别只在于文档节点；假 DOM 没有文档父节点，直接等价。 */
+  get parentElement() {
+    return this.parentNode || null
+  }
   get previousElementSibling() {
     if (!this.parentNode) return null
     const list = this.parentNode.children

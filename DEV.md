@@ -20,6 +20,7 @@ tools/smoke.mjs         冒烟：抓屏 / 落盘 / 真录一段并校验 WebM / 
 tools/check-capture-sources.mjs  宿主侧自测：源枚举 + --region/--hwnd/--max-edge 的帧尺寸
 tools/e2e-annotate.mjs  真机端到端：CDP 合成事件走「截图 → 拖框 → 松手出工具栏 → 落墨 → 用这张」
 tools/e2e-record-picker.mjs      真机端到端：录屏选源框（mock 模式验客户端，--live 真录并校验尺寸）
+tools/check-picker-collapse.mjs  真浏览器回归（无头 Chrome + 假宿主路由）：选源框每次打开时窗口列表必须是收起的
 tools/check-live-record.mjs      真宿主验收（不需要 CDP/页面）：真清单 + 区域/窗口录制 + 抽帧验尺寸
 tools/check-window-hide.mjs      真宿主验收（不需要 CDP/页面）：隐藏DSH界面 → 藏窗口 → 抓屏 → 恢复
 tools/check-bundle.mjs  安装前自检：复刻插件管理器的 inspect 判据
