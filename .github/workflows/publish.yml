@@ -1,0 +1,62 @@
+name: Publish to npm
+
+# 打 tag 即发布：push v1.2.3 → 校验 tag 与 package.json 一致 → npm publish（OIDC 可信发布，无长期 token）。
+# 也可以手动跑：Actions → Publish to npm → Run workflow（用 main 上的版本号发布）。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # 可信发布（Trusted Publishing）必需：GitHub Actions 用 OIDC 换 npm 的短时凭证
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # 发布构建不用缓存，避免拿到过期依赖
+
+      # 本包没有运行时依赖，不需要 npm ci；只跑仓库自带的离线闸门
+      - name: Bundle 与源码一致
+        run: node tools/build-client.mjs --check
+
+      - name: 离线自检
+        run: node tools/selftest.mjs
+
+      - name: 校验 tag 与 package.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          echo "tag=$tag  package.json=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 package.json 版本 $pkg 不一致"
+            exit 1
+          fi
+
+      # 可信发布：npm CLI 在 GitHub Actions 里自动检测 OIDC，换短时 token，无需 NPM_TOKEN
+      - name: npm publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            npm publish --provenance --tag next
+          else
+            npm publish --provenance
+          fi
