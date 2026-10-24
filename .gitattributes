@@ -1,0 +1,3 @@
+# 全部按 LF 存取：仓库里有「生成物必须与源码逐字节一致」的自检（tools/build-client.mjs），
+# 行尾随平台变化会让 Windows 本地通过、Linux CI 失败（2026-10-24 实测）。
+* text=auto eol=lf

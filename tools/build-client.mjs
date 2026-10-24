@@ -25,7 +25,10 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const bodyPath = path.join(root, 'lib', 'client.body.js')
 const outPath = path.join(root, 'lib', 'client.js')
 
-const body = fs.readFileSync(bodyPath, 'utf8').replace(/^\uFEFF/, '')
+// 统一按 LF 生成：Windows 工作区（core.autocrlf）里读到的 body 可能是 CRLF，
+// 若直接按 '\n' 拆行，空行会变成 "\t\t\r"，在 Linux CI（LF 检出）里重跑就与
+// 提交的 client.js 不一致 —— 2026-10-24 的 Actions 失败就是这么来的。
+const body = fs.readFileSync(bodyPath, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
 
 /**
  * 语法闸门：生成的 client.js 会被 client-hmr 直接塞进渲染进程执行，
@@ -70,7 +73,9 @@ const generated = banner + body.split('\n').map((line) => (line.length ? '\t\t' 
 
 const check = process.argv.includes('--check')
 if (check) {
-  const current = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : ''
+  const current = fs.existsSync(outPath)
+    ? fs.readFileSync(outPath, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+    : ''
   if (current !== generated) {
     console.error('lib/client.js 与 client.body.js 不一致，请跑 node tools/build-client.mjs')
     process.exit(1)

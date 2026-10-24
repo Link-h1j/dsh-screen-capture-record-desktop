@@ -13,6 +13,12 @@
   预发布版本（版本号含 `-`）自动发到 `next` dist-tag。
   本版无功能改动，用于验证可信发布链路。
 
+### 修复
+
+- `tools/build-client.mjs` 统一按 LF 生成与校验：Windows（CRLF 检出）和 Linux CI
+  现在会得到逐字节相同的 `lib/client.js`（此前 CI 的「bundle 与源码一致」检查会误报失败）。
+  另加 `.gitattributes`（`* text=auto eol=lf`）固定行尾。
+
 ## [0.6.1] - 2026-10-24
 
 ### 变更
