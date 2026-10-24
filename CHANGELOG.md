@@ -3,6 +3,16 @@
 本插件的所有值得一提的改动都记在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.2] - 2026-10-24
+
+### 变更
+
+- **发布流程改用 npm Trusted Publishing（GitHub Actions OIDC）**：打 `v*` tag 即自动发布，
+  不再需要长期 npm token，也不需要手工 2FA。工作流见 `.github/workflows/publish.yml`
+  （校验 tag 与 package.json 一致 → bundle 一致性 + 离线自检 → `npm publish --provenance`）。
+  预发布版本（版本号含 `-`）自动发到 `next` dist-tag。
+  本版无功能改动，用于验证可信发布链路。
+
 ## [0.6.1] - 2026-10-24
 
 ### 变更
