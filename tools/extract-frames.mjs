@@ -20,8 +20,9 @@
  *   --no-dedupe  不做逐帧去重（默认丢掉与上一帧完全相同的画面）
  *   --json     输出机器可读的 JSON（agent 直接解析）
  *
- * ffmpeg 探测顺序：$DSH_CAPTURE_FFMPEG → C:\Program Files\CP3\ffmpeg.exe →
- * playwright 自带 → PATH。抽帧只用 PNG 编码器，任何一份 ffmpeg 都够。
+ * ffmpeg 探测顺序：$DSH_CAPTURE_FFMPEG（进程内变量，没有再补读用户级注册表
+ * HKCU\Environment）→ C:\Program Files\CP3\ffmpeg.exe → playwright 自带 → PATH。
+ * 抽帧只用 PNG 编码器，任何一份 ffmpeg 都够。
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -69,9 +70,25 @@ function parseFps(spec) {
 const fps = parseFps(fpsSpec)
 const stepSec = 1 / fps
 
+/**
+ * 从 HKCU\Environment 读用户级环境变量。
+ * `setx` 只写注册表，已运行进程的环境块读不到；这里兜底，语义同 lib/index.js 同名函数。
+ */
+function readUserEnv(name) {
+  try {
+    const r = spawnSync('reg', ['query', 'HKCU\\Environment', '/v', name], { timeout: 3000, windowsHide: true, encoding: 'utf8' })
+    if (r.status !== 0 || typeof r.stdout !== 'string') return null
+    const m = r.stdout.match(new RegExp(name + '\\s+REG_\\w+\\s+(.+)$', 'm'))
+    return m ? m[1].trim() : null
+  } catch (e) {
+    return null
+  }
+}
+
 function findFfmpeg() {
   const cands = []
-  if (process.env.DSH_CAPTURE_FFMPEG) cands.push(process.env.DSH_CAPTURE_FFMPEG)
+  const envFf = process.env.DSH_CAPTURE_FFMPEG || readUserEnv('DSH_CAPTURE_FFMPEG')
+  if (envFf) cands.push(envFf)
   cands.push('C:\\Program Files\\CP3\\ffmpeg.exe')
   try {
     const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright')

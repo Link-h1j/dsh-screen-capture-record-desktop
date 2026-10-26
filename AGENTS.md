@@ -26,7 +26,9 @@ node tools/extract-frames.mjs <截图.jpg>
 它会打印每帧的**绝对路径 + 时间戳 + 尺寸**（加 `--json` 给机器读）。拿到路径后，
 用你所在 harness 的读图能力逐帧看（本机 DSH 里是 `read_image`），**看完再动手**。
 
-ffmpeg 探测顺序：`$DSH_CAPTURE_FFMPEG` → `C:\Program Files\CP3\ffmpeg.exe` → playwright 自带 → `PATH`。
+ffmpeg 探测顺序：`$DSH_CAPTURE_FFMPEG`（进程内变量，没有再补读用户级注册表 `HKCU\Environment`）
+→ 录屏侧：playwright 自带 → winget / choco / scoop / `Program Files` → `PATH`；
+抽帧工具还会先看一眼 `C:\Program Files\CP3\ffmpeg.exe`。
 
 ## 看的时候要想到这些，否则会误判
 

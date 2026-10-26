@@ -3,6 +3,25 @@
 本插件的所有值得一提的改动都记在这里。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.3] - 2026-10-26
+
+### 修复
+
+- **设了 `DSH_CAPTURE_FFMPEG`，录屏却还在用 Playwright 自带的那份 ffmpeg**：`setx` 与
+  「用户级环境变量」只写注册表，而 DSH 从 explorer 启动时环境块在启动那一刻就固定了 ——
+  **连重启 DSH 都带不上新值**（本机实测：重启后宿主 `process.env.DSH_CAPTURE_FFMPEG` 仍为空）。
+  录屏侧现在先看进程内变量，没有就补读 `HKCU\Environment`；抽帧工具
+  `tools/extract-frames.mjs` 用同一套兜底，让两边吃到同一份 ffmpeg。
+  本机验收（2026-10-26 重跑确认）：进程内 `DSH_CAPTURE_FFMPEG` 为空、只在用户级注册表里设值 ——
+  `record/start` 回执的 `ffmpeg` 是 `ffmpeg.exe`（注册表指向的 n9.0.2，不是 Playwright 那份
+  `ffmpeg-win64.exe`），产物 VP8 / WebM、魔数 `1a45dfa3` 合法；抽帧 `--json` 的 `ffmpeg`
+  字段同样指向它。
+
+### 说明
+
+- 探测结果仍按进程缓存。宿主**已经录过一次屏**（缓存已填）之后再改环境变量，需要重启 DSH
+  或禁用再启用插件才会重新探测；还没录过的话，改完下一次录屏即生效。
+
 ## [0.6.2] - 2026-10-24
 
 ### 变更

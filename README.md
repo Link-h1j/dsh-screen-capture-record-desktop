@@ -182,10 +182,13 @@ ffmpeg -hide_banner -muxers  | findstr /i webm
 | 环境变量 | 指向 | 不设置时的查找顺序 |
 | --- | --- | --- |
 | `DSH_CAPTURE_PYTHON` | 带 Pillow 的 `python.exe` | 插件所在工作区里的虚拟环境 / 自带 CPython → 系统 `PATH` 上的 `python.exe` |
-| `DSH_CAPTURE_FFMPEG` | 上面那份 `ffmpeg.exe` | 工作区或 `%LOCALAPPDATA%` 下的 `ms-playwright\ffmpeg-*` → 系统 `PATH` 上的 `ffmpeg.exe` |
+| `DSH_CAPTURE_FFMPEG` | 上面那份 `ffmpeg.exe` | 进程内同名变量 → 用户级注册表 `HKCU\Environment` 里的同名变量 → 工作区或 `%LOCALAPPDATA%` 下的 `ms-playwright\ffmpeg-*` → winget / choco / scoop / `Program Files` 里的常见位置 → 系统 `PATH` 上的 `ffmpeg.exe` |
 | `DSH_CAPTURE_POWERSHELL` | 抓屏用的 PowerShell | `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` → `PATH` 上的 `powershell.exe` |
 
-设置之后要**完整重启 DSH**（这些变量在宿主进程启动时读取）。截图不依赖 Python / ffmpeg，所以缺了它们按钮仍然可用，只是录屏会报错。
+设置之后**一般不用重启**：插件探测时会补读用户级注册表（`HKCU\Environment`），所以用 `setx`
+写进去之后，下一次录屏 / 抽帧就能用上（宿主进程内已经有值时仍以进程内为准）。
+唯一要重启的情况：宿主**已经录过一次屏**（探测结果按进程缓存），改完变量得重启 DSH
+或禁用再启用插件才会重新探测。截图不依赖 Python / ffmpeg，所以缺了它们按钮仍然可用，只是录屏会报错。
 
 ## 配置
 
